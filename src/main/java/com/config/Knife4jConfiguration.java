@@ -1,4 +1,4 @@
-package com.example.demo.config;
+package com.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -28,7 +28,7 @@ public class Knife4jConfiguration {
                 .groupName ( " Version 2.X" )
                 .select ( )
                 //Specify the Controller scan package path here
-                .apis ( RequestHandlerSelectors . basePackage ( "com.example.demo.controller" ) )
+                .apis ( RequestHandlerSelectors . basePackage ( "com.controller" ) )
                 .paths ( PathSelectors . any () )
                 .build () ;
         return  docket;

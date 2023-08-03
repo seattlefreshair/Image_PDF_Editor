@@ -1,4 +1,4 @@
-package com.example.demo;
+package com;
 
 import org.im4java.core.GraphicsMagickCmd;
 import org.im4java.core.IM4JavaException;
