@@ -8,37 +8,67 @@ import org.im4java.core.*;
 import org.im4java.process.ArrayListOutputConsumer;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.StringTokenizer;
 
 @Api(tags = "首页模块")
 @RestController
 public class IndexController {
     @ApiImplicitParam(name = "name",value = "姓名",required = true)
     @ApiOperation(value = "向客人问好")
-    @GetMapping("/sayHi")
-    public GMOperation sayHi(@RequestParam(value = "name") String name) throws Exception {
+    @PostMapping("/sayHi")
+    public ResponseEntity<String> sayHi(@RequestParam(value = "name") String name) throws Exception {
 
+        // create an Identify command
         IdentifyCmd identifyCmd = new IdentifyCmd(true);
 
-//        ArrayListOutputConsumer output = new ArrayListOutputConsumer();
-//        identifyCmd.setOutputConsumer(output);
+        // set the output
+        ArrayListOutputConsumer commandOutput = new ArrayListOutputConsumer();
+        identifyCmd.setOutputConsumer(commandOutput);
 
-//        Info info = new Info("/Users/kyle/Internship/scratch/Sunflower_from_Silesia2.jpeg", true);
-//        // Extract width and height from the image information
-//        int width = info.getImageWidth();
-//        int height = info.getImageHeight();
-
+        // create GM operation
         GMOperation op = new GMOperation();
         op.addImage("/Users/kyle/Internship/scratch/Sunflower_from_Silesia2.jpeg");
-        op.format("%w"); // Format output as width,height
+
         identifyCmd.run(op);
-//        ArrayList<String> cmdOutput = output.getOutput();
-//        // todo iterate this
-//        String dimensions = cmdOutput.get(0);
-//        return ResponseEntity.ok("Hi: "+name + " my name is Kyle." );
-        return op;
+
+        ArrayList<String> cmdOutput = commandOutput.getOutput();
+                // todo iterate this
+        String outputString = cmdOutput.get(0);
+
+        StringTokenizer st = new StringTokenizer(outputString, " ", false);
+        int count = 0;
+        String imageDetails = "";
+        while (st.hasMoreTokens()) {
+//            System.out.print("next token is " + st1.nextToken() + " ");
+            st.nextToken();
+//            System.out.println(count);
+            if (count == 1) {
+//                System.out.println("We made it");
+               imageDetails = (String) st.nextToken();
+//                System.out.println("This is the dimensions: " + imageDetails);
+               break;
+            }
+            count++;
+        }
+
+        StringTokenizer stringTokenizerPlus = new StringTokenizer(imageDetails, "+", false);
+        String dimensions = stringTokenizerPlus.nextToken();
+
+        StringTokenizer stringTokenizerX = new StringTokenizer(dimensions, "x", false);
+        String stringWidth = stringTokenizerX.nextToken();
+        int width = Integer.parseInt(stringWidth);
+        String stringHeight = stringTokenizerX.nextToken();
+        int height = Integer.parseInt(stringHeight);
+        System.out.println("The width is "+ width + " and the height is " + height);
+
+
+        return ResponseEntity.ok("Hi: " + name + " my name is Kyle. output: "
+                + "full string " + outputString
+//                + " size " + cmdOutput.size()
+                + "dimensions is "+ imageDetails
+                );
     }
 
     // Remove outside borders
@@ -255,7 +285,8 @@ public class IndexController {
             @ApiImplicitParam(name = "fileDirectory", value = "Directory of the pdf to be processed", required = true),
             @ApiImplicitParam(name = "imageWatermarkDirectory", value = "Directory of the image to be used as a watermark", required = true),
             @ApiImplicitParam(name = "isPDF", value = "Boolean if output file should be a pdf", required = true),
-            @ApiImplicitParam(name = "isRotated", value = "Boolean if the watermark is rotated", required = true)
+            @ApiImplicitParam(name = "isRotated", value = "Boolean if the watermark is rotated", required = true),
+            @ApiImplicitParam(name = "isFullPage", value = "Boolean if the watermark should cover the entire page", required = true)
     })
     @ApiOperation(value = "Image or PDF Watermark")
     @PostMapping("/imagePDFWatermark")
@@ -263,7 +294,8 @@ public class IndexController {
             @RequestParam(value = "fileDirectory") String fileDirectory,
             @RequestParam(value = "imageWatermarkDirectory") String imageWatermarkDirectory,
             @RequestParam(value = "isPDF") boolean isPDF,
-            @RequestParam(value = "isRotated") boolean isRotated
+            @RequestParam(value = "isRotated") boolean isRotated,
+            @RequestParam(value = "isFullPage") boolean isFullPage
     ) throws Exception {
         // step 1: gm convert +shade 30x60 cockatoo.miff mask.miff
         ConvertCmd cmd = new ConvertCmd(true);
@@ -302,60 +334,69 @@ public class IndexController {
             ConvertCmd rotateCmd = new ConvertCmd(true);
             GMOperation rotateOP = new GMOperation();
             rotateOP.addImage(imageWatermarkDirectory);
-            rotateOP.rotate(45.);
+            rotateOP.rotate(30.);
             String rotatedWatermark = "/Users/kyle/Internship/scratch/rotatedWatermark.jpeg";
             rotateOP.addImage(rotatedWatermark);
             rotateCmd.run(rotateOP);
             imageWatermarkDirectory = rotatedWatermark;
         }
 
+//        Resize to full page watermark
+        if (isFullPage) {
+            // create an Identify command
+            IdentifyCmd identifyCmd = new IdentifyCmd(true);
+
+            // set the output
+            ArrayListOutputConsumer commandOutput = new ArrayListOutputConsumer();
+            identifyCmd.setOutputConsumer(commandOutput);
+
+            // create GM operation
+            GMOperation dimensionsOp = new GMOperation();
+            dimensionsOp.addImage(fileDirectory);
+
+            identifyCmd.run(dimensionsOp);
+//
+            ArrayList<String> cmdOutput = commandOutput.getOutput();
+            String outputString = cmdOutput.get(0);
+
+            StringTokenizer st = new StringTokenizer(outputString, " ", false);
+            int count = 0;
+            String imageDetails = "";
+            while (st.hasMoreTokens()) {
+                st.nextToken();
+                if (count == 1) {
+                    imageDetails = (String) st.nextToken();
+                    break;
+                }
+                count++;
+            }
+
+            StringTokenizer stringTokenizerPlus = new StringTokenizer(imageDetails, "+", false);
+            String dimensions = stringTokenizerPlus.nextToken();
+
+            StringTokenizer stringTokenizerX = new StringTokenizer(dimensions, "x", false);
+            String stringWidth = stringTokenizerX.nextToken();
+            int width = Integer.parseInt(stringWidth);
+            String stringHeight = stringTokenizerX.nextToken();
+            int height = Integer.parseInt(stringHeight);
+            width *= 2.5;
+            height *= 2.5;
+            ConvertCmd resizeCmd = new ConvertCmd(true);
+            GMOperation resizeOP = new GMOperation();
+            resizeOP.addImage(imageWatermarkDirectory);
+            resizeOP.resize(width, height);
+            String resizedWatermark = "/Users/kyle/Internship/scratch/resizedWatermark.jpeg";
+            resizeOP.addImage(resizedWatermark);
+            resizeCmd.run(resizeOP);
+            imageWatermarkDirectory = resizedWatermark;
+        }
         op.addImage(imageWatermarkDirectory, fileDirectory, mask_output_file);
         op.gravity("center");
 
         // Get the height and width of the input file
 
-        Info info = new Info("/Users/kyle/Internship/scratch/Sunflower_from_Silesia2.jpeg", true);
-        // Extract width and height from the image information
-        int width = info.getImageWidth();
-        int height = info.getImageHeight();
-
-//        ConvertCmd paramCmd = new ConvertCmd(true);
-//        GMOperation paramOp = new GMOperation();
-//        paramOp.format("%w,%h"); // Format output as width,height
-//        paramOp.addImage(imageWatermarkDirectory);
-//
-//        // Execute the command with the specified operation
-//        paramOp.addImage("/Users/kyle/Internship/scratch/proportions.jpeg");
-//        paramCmd.run(paramOp);
-
-//        // Get the dimensions of the input image
-//        IdentifyCmd identifyCmd = new IdentifyCmd(true);
-//        ArrayListOutputConsumer output = new ArrayListOutputConsumer();
-//        identifyCmd.setOutputConsumer(output);
-//        identifyCmd.run(op);
-//        String dimensions = output.getOutput().get(0);
-//        String[] parts = dimensions.split(" ");
-//        int width = Integer.parseInt(parts[2]);
-//        int height = Integer.parseInt(parts[3]);
-//        // Resize the watermark to match the dimensions of the input image
-//        op.resize();
-
         op.addImage(outputFile);
         compositeCmd.run(op);
-
-//        String maskImage = "/Users/kyle/Internship/scratch/gray1.jpeg";
-//        String maskImage = "/Users/kyle/Internship/scratch/Windows_black_edges.png";
-//        op.addImage(imageWatermarkDirectory, pdfDirectory, maskImage);
-//        op.addImage(imageWatermarkDirectory, pdfDirectory);
-//        op.addImage(pdfDirectory);
-
-//        op.background("transparent");
-
-//        String outputFile = "/Users/kyle/Internship/scratch/imageWatermarked.pdf";
-
-//        op.channel("Matte");
-//        op.addImage(outputFile);
-//        cmd.run(op);
         return ResponseEntity.ok("Your image watermark has been added: " + outputFile);
     }
 
