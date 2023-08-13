@@ -15,10 +15,15 @@ import java.util.StringTokenizer;
 @Api(tags = "首页模块")
 @RestController
 public class IndexController {
-    @ApiImplicitParam(name = "name",value = "姓名",required = true)
+    @ApiImplicitParam(name = "number_of_pages", value = "number_of_pages",required = true)
     @ApiOperation(value = "向客人问好")
     @PostMapping("/sayHi")
-    public ResponseEntity<String> sayHi(@RequestParam(value = "name") String name) throws Exception {
+    public ResponseEntity<String> sayHi(@RequestParam(value = "number_of_pages") int number_of_pages) throws Exception {
+        // todo:
+        //  1. How to find number of pages?
+        //  2. For each page add watermark DONE
+        //  3. Combine all files into one file DONE
+        String inputPdfPath = "/Users/kyle/Internship/scratch/pdfWatermarked.pdf";
 
         // create an Identify command
         IdentifyCmd identifyCmd = new IdentifyCmd(true);
@@ -28,47 +33,22 @@ public class IndexController {
         identifyCmd.setOutputConsumer(commandOutput);
 
         // create GM operation
-        GMOperation op = new GMOperation();
-        op.addImage("/Users/kyle/Internship/scratch/Sunflower_from_Silesia2.jpeg");
+        GMOperation dimensionsOp = new GMOperation();
+        dimensionsOp.addImage(inputPdfPath);
 
-        identifyCmd.run(op);
+        identifyCmd.run(dimensionsOp);
+        String outputString = "";
 
         ArrayList<String> cmdOutput = commandOutput.getOutput();
-                // todo iterate this
-        String outputString = cmdOutput.get(0);
-
-        StringTokenizer st = new StringTokenizer(outputString, " ", false);
-        int count = 0;
-        String imageDetails = "";
-        while (st.hasMoreTokens()) {
-//            System.out.print("next token is " + st1.nextToken() + " ");
-            st.nextToken();
-//            System.out.println(count);
-            if (count == 1) {
-//                System.out.println("We made it");
-               imageDetails = (String) st.nextToken();
-//                System.out.println("This is the dimensions: " + imageDetails);
-               break;
-            }
-            count++;
+        for (String s : cmdOutput) {
+            outputString = s;
+            System.out.println(outputString);
         }
 
-        StringTokenizer stringTokenizerPlus = new StringTokenizer(imageDetails, "+", false);
-        String dimensions = stringTokenizerPlus.nextToken();
-
-        StringTokenizer stringTokenizerX = new StringTokenizer(dimensions, "x", false);
-        String stringWidth = stringTokenizerX.nextToken();
-        int width = Integer.parseInt(stringWidth);
-        String stringHeight = stringTokenizerX.nextToken();
-        int height = Integer.parseInt(stringHeight);
-        System.out.println("The width is "+ width + " and the height is " + height);
-
-
-        return ResponseEntity.ok("Hi: " + name + " my name is Kyle. output: "
-                + "full string " + outputString
-//                + " size " + cmdOutput.size()
-                + "dimensions is "+ imageDetails
-                );
+        return ResponseEntity.ok("Hi: "
+                + number_of_pages + " my name is Kyle. output: "
+                + outputString
+                + " size is " + cmdOutput.size());
     }
 
     // Remove outside borders
@@ -297,106 +277,146 @@ public class IndexController {
             @RequestParam(value = "isRotated") boolean isRotated,
             @RequestParam(value = "isFullPage") boolean isFullPage
     ) throws Exception {
-        // step 1: gm convert +shade 30x60 cockatoo.miff mask.miff
-        ConvertCmd cmd = new ConvertCmd(true);
-        GMOperation op_for_convert = new GMOperation();
-
-        // input file path
-        op_for_convert.addImage(fileDirectory);
-        op_for_convert.p_shade(30.00, 30.00);
-
-        // temp output file path
-        String mask_output_file = "/Users/kyle/Internship/scratch/mask.jpeg";
-        op_for_convert.addImage(mask_output_file);
-
-        // run convert to generate a greyscale version of the input file
-        cmd.run(op_for_convert);
-
-        // step 2: Composite
-        CompositeCmd compositeCmd = new CompositeCmd(true);
-        GMOperation op = new GMOperation();
-
-        // Note: compose is manually added support in im4java. That's why we use
-        // a local jar file instead of the ones from the maven repository
-        op.compose("bumpmap");
-
+        String inputFile;
         String outputFile = "/Users/kyle/Internship/scratch/imageWatermarked.jpeg";
-        if (isPDF)
-        {
-            // For resolution purposes, high memory density
-            int density = 400;
-            op.density(density);
-            outputFile = "/Users/kyle/Internship/scratch/pdfWatermarked.pdf";
-        }
+        String mergeFile = outputFile;
 
-//      Rotate the watermark
-        if (isRotated) {
-            ConvertCmd rotateCmd = new ConvertCmd(true);
-            GMOperation rotateOP = new GMOperation();
-            rotateOP.addImage(imageWatermarkDirectory);
-            rotateOP.rotate(30.);
-            String rotatedWatermark = "/Users/kyle/Internship/scratch/rotatedWatermark.jpeg";
-            rotateOP.addImage(rotatedWatermark);
-            rotateCmd.run(rotateOP);
-            imageWatermarkDirectory = rotatedWatermark;
-        }
+        // Get the number of pages in fileDirectory
+        IdentifyCmd pagesIdentifyCmd = new IdentifyCmd(true);
 
-//        Resize to full page watermark
-        if (isFullPage) {
-            // create an Identify command
-            IdentifyCmd identifyCmd = new IdentifyCmd(true);
+        // set the output
+        ArrayListOutputConsumer pagesCommandOutput = new ArrayListOutputConsumer();
+        pagesIdentifyCmd.setOutputConsumer(pagesCommandOutput);
 
-            // set the output
-            ArrayListOutputConsumer commandOutput = new ArrayListOutputConsumer();
-            identifyCmd.setOutputConsumer(commandOutput);
+        // create GM operation
+        GMOperation pagesDimensionsOp = new GMOperation();
+        pagesDimensionsOp.addImage(fileDirectory);
 
-            // create GM operation
-            GMOperation dimensionsOp = new GMOperation();
-            dimensionsOp.addImage(fileDirectory);
+        pagesIdentifyCmd.run(pagesDimensionsOp);
+        ArrayList<String> pagesCmdOutput = pagesCommandOutput.getOutput();
+        int pages = pagesCmdOutput.size();
+        System.out.println(pages);
 
-            identifyCmd.run(dimensionsOp);
-//
-            ArrayList<String> cmdOutput = commandOutput.getOutput();
-            String outputString = cmdOutput.get(0);
+        // Each page represents each "i"
+        for (int i = 0; i < pages; i++) {
+            inputFile = fileDirectory + "[" + i + "]";
+            // step 1: gm convert +shade 30x60 cockatoo.miff mask.miff
+            ConvertCmd cmd = new ConvertCmd(true);
+            GMOperation op_for_convert = new GMOperation();
 
-            StringTokenizer st = new StringTokenizer(outputString, " ", false);
-            int count = 0;
-            String imageDetails = "";
-            while (st.hasMoreTokens()) {
-                st.nextToken();
-                if (count == 1) {
-                    imageDetails = (String) st.nextToken();
-                    break;
-                }
-                count++;
+            // input file path
+            op_for_convert.addImage(inputFile);
+            op_for_convert.p_shade(30.00, 30.00);
+
+            // temp output file path
+            String mask_output_file = "/Users/kyle/Internship/scratch/mask.jpeg";
+            op_for_convert.addImage(mask_output_file);
+
+            // run convert to generate a greyscale version of the input file
+            cmd.run(op_for_convert);
+
+            // step 2: Composite
+            CompositeCmd compositeCmd = new CompositeCmd(true);
+            GMOperation op = new GMOperation();
+            // Note: compose is manually added support in im4java. That's why we use
+            // a local jar file instead of the ones from the maven repository
+            op.compose("bumpmap");
+
+            // For resolution purposes, high memory density if file is PDF
+            if (isPDF)
+            {
+                int density = 400;
+                op.density(density);
+                outputFile = "/Users/kyle/Internship/scratch/pdfWatermarked";
+                mergeFile = outputFile;
             }
 
-            StringTokenizer stringTokenizerPlus = new StringTokenizer(imageDetails, "+", false);
-            String dimensions = stringTokenizerPlus.nextToken();
+//            Rotate the watermark
+            if (isRotated) {
+                ConvertCmd rotateCmd = new ConvertCmd(true);
+                GMOperation rotateOP = new GMOperation();
+                rotateOP.addImage(imageWatermarkDirectory);
+                rotateOP.rotate(30.);
+                String rotatedWatermark = "/Users/kyle/Internship/scratch/rotatedWatermark.jpeg";
+                rotateOP.addImage(rotatedWatermark);
+                rotateCmd.run(rotateOP);
+                imageWatermarkDirectory = rotatedWatermark;
+            }
 
-            StringTokenizer stringTokenizerX = new StringTokenizer(dimensions, "x", false);
-            String stringWidth = stringTokenizerX.nextToken();
-            int width = Integer.parseInt(stringWidth);
-            String stringHeight = stringTokenizerX.nextToken();
-            int height = Integer.parseInt(stringHeight);
-            width *= 2.5;
-            height *= 2.5;
-            ConvertCmd resizeCmd = new ConvertCmd(true);
-            GMOperation resizeOP = new GMOperation();
-            resizeOP.addImage(imageWatermarkDirectory);
-            resizeOP.resize(width, height);
-            String resizedWatermark = "/Users/kyle/Internship/scratch/resizedWatermark.jpeg";
-            resizeOP.addImage(resizedWatermark);
-            resizeCmd.run(resizeOP);
-            imageWatermarkDirectory = resizedWatermark;
+//            Resize to full page watermark
+            if (isFullPage) {
+                // create an Identify command
+                IdentifyCmd identifyCmd = new IdentifyCmd(true);
+
+                // set the output
+                ArrayListOutputConsumer commandOutput = new ArrayListOutputConsumer();
+                identifyCmd.setOutputConsumer(commandOutput);
+
+                // create GM operation
+                GMOperation dimensionsOp = new GMOperation();
+                dimensionsOp.addImage(inputFile);
+
+                identifyCmd.run(dimensionsOp);
+
+                ArrayList<String> cmdOutput = commandOutput.getOutput();
+                String outputString = cmdOutput.get(0);
+
+                StringTokenizer st = new StringTokenizer(outputString, " ", false);
+                int count = 0;
+                String imageDetails = "";
+                while (st.hasMoreTokens()) {
+                    st.nextToken();
+                    if (count == 1) {
+                        imageDetails = (String) st.nextToken();
+                        break;
+                    }
+                    count++;
+                }
+
+                StringTokenizer stringTokenizerPlus = new StringTokenizer(imageDetails, "+", false);
+                String dimensions = stringTokenizerPlus.nextToken();
+
+                StringTokenizer stringTokenizerX = new StringTokenizer(dimensions, "x", false);
+                String stringWidth = stringTokenizerX.nextToken();
+                int width = Integer.parseInt(stringWidth);
+                String stringHeight = stringTokenizerX.nextToken();
+                int height = Integer.parseInt(stringHeight);
+                width *= 2.5;
+                height *= 2.5;
+                ConvertCmd resizeCmd = new ConvertCmd(true);
+                GMOperation resizeOP = new GMOperation();
+                resizeOP.addImage(imageWatermarkDirectory);
+                resizeOP.resize(width, height);
+                String resizedWatermark = "/Users/kyle/Internship/scratch/resizedWatermark.jpeg";
+                resizeOP.addImage(resizedWatermark);
+                resizeCmd.run(resizeOP);
+                imageWatermarkDirectory = resizedWatermark;
+            }
+
+            op.addImage(imageWatermarkDirectory, inputFile, mask_output_file);
+            op.gravity("center");
+
+//            create a seperate pdf for each page of fileDirectory
+            if (isPDF) {
+                outputFile += "[" + i + "].pdf";
+            }
+
+            op.addImage(outputFile);
+            compositeCmd.run(op);
         }
-        op.addImage(imageWatermarkDirectory, fileDirectory, mask_output_file);
-        op.gravity("center");
 
-        // Get the height and width of the input file
+//        Combine each page of the previous pdf into one single pdf
+        if (isPDF) {
+            ConvertCmd mergeCMD = new ConvertCmd(true);
+            GMOperation mergeOperation = new GMOperation();
+            for (int i = 0; i < pages; i++) {
+                mergeOperation.addImage(mergeFile + "[" + i + "].pdf");
+            }
+            outputFile = mergeFile + ".pdf";
+            mergeOperation.addImage(outputFile);
+            mergeCMD.run(mergeOperation);
+        }
 
-        op.addImage(outputFile);
-        compositeCmd.run(op);
         return ResponseEntity.ok("Your image watermark has been added: " + outputFile);
     }
 
