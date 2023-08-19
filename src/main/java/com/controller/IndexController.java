@@ -8,7 +8,6 @@ import org.im4java.core.*;
 import org.im4java.process.ArrayListOutputConsumer;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.StringTokenizer;
 
@@ -93,9 +92,7 @@ public class IndexController {
 
         op.addImage(picDirectory);
 
-//        op.affine(1.0, -skewY, -skewX, 1.0, 0.0, 0.0);
         op.transform().shear(skewX, skewY);
-//        op.autoOrient();
 
         op.addImage("/Users/kyle/Internship/scratch/fixSkewing.jpeg");
         cmd.run(op);
@@ -107,15 +104,11 @@ public class IndexController {
     @ApiImplicitParam(name = "picDirectory",value = "Directory of the image to be processed", required = true)
     @ApiOperation(value = "Remove Stains")
     @PostMapping("/removeStains")
-    public ResponseEntity<String> removeStains (@RequestParam(value = "picDirectory") String picDirectory) throws Exception{
+    public ResponseEntity<String> removeStains (@RequestParam(value = "picDirectory") String picDirectory) throws Exception {
         ConvertCmd cmd = new ConvertCmd(true);
         GMOperation op = new GMOperation();
 
         op.addImage(picDirectory);
-
-//        op.negate();
-//        op.threshold(50, true);
-//        op.negate();
 
         // Filter the image to remove noise and black dots
         op.noise(1.0);
@@ -261,27 +254,81 @@ public class IndexController {
         return ResponseEntity.ok("Your text watermark has been added: " + outputFile);
     }
 
+    private String rotatedWatermark (String imageWatermarkDirectory, double degrees) throws Exception {
+        ConvertCmd rotateCmd = new ConvertCmd(true);
+        GMOperation rotateOP = new GMOperation();
+        rotateOP.addImage(imageWatermarkDirectory);
+        rotateOP.rotate(degrees);
+        String rotatedWatermark = "/Users/kyle/Internship/scratch/rotatedWatermark.jpeg";
+        rotateOP.addImage(rotatedWatermark);
+        rotateCmd.run(rotateOP);
+        return rotatedWatermark;
+    }
+
+    private String fullPage (String inputFile, String imageWatermarkDirectory, boolean isRotated) throws Exception {
+        // create an Identify command
+        IdentifyCmd identifyCmd = new IdentifyCmd(true);
+
+        // set the output
+        ArrayListOutputConsumer commandOutput = new ArrayListOutputConsumer();
+        identifyCmd.setOutputConsumer(commandOutput);
+
+        // create GM operation
+        GMOperation dimensionsOp = new GMOperation();
+        dimensionsOp.addImage(inputFile);
+
+        identifyCmd.run(dimensionsOp);
+
+        ArrayList<String> cmdOutput = commandOutput.getOutput();
+        String outputString = cmdOutput.get(0);
+
+        StringTokenizer st = new StringTokenizer(outputString, " ", false);
+        int count = 0;
+        String imageDetails = "";
+        while (st.hasMoreTokens()) {
+            st.nextToken();
+            if (count == 1) {
+                imageDetails = (String) st.nextToken();
+                break;
+            }
+            count++;
+        }
+
+        StringTokenizer stringTokenizerPlus = new StringTokenizer(imageDetails, "+", false);
+        String dimensions = stringTokenizerPlus.nextToken();
+
+        StringTokenizer stringTokenizerX = new StringTokenizer(dimensions, "x", false);
+        String stringWidth = stringTokenizerX.nextToken();
+        int width = Integer.parseInt(stringWidth);
+        String stringHeight = stringTokenizerX.nextToken();
+        int height = Integer.parseInt(stringHeight);
+        width *= 2.5;
+        height *= 2.5;
+        ConvertCmd resizeCmd = new ConvertCmd(true);
+        GMOperation resizeOP = new GMOperation();
+        resizeOP.addImage(imageWatermarkDirectory);
+        resizeOP.resize(width, height);
+        String resizedWatermark = "/Users/kyle/Internship/scratch/resizedWatermark.jpeg";
+        resizeOP.addImage(resizedWatermark);
+        resizeCmd.run(resizeOP);
+        return resizedWatermark;
+    }
+
     @ApiImplicitParams({
-            @ApiImplicitParam(name = "fileDirectory", value = "Directory of the pdf to be processed", required = true),
+            @ApiImplicitParam(name = "pdfDirectory", value = "Directory of the pdf to be processed", required = true),
             @ApiImplicitParam(name = "imageWatermarkDirectory", value = "Directory of the image to be used as a watermark", required = true),
-            @ApiImplicitParam(name = "isPDF", value = "Boolean if output file should be a pdf", required = true),
             @ApiImplicitParam(name = "isRotated", value = "Boolean if the watermark is rotated", required = true),
             @ApiImplicitParam(name = "isFullPage", value = "Boolean if the watermark should cover the entire page", required = true)
     })
-    @ApiOperation(value = "Image or PDF Watermark")
-    @PostMapping("/imagePDFWatermark")
-    public ResponseEntity<String> imagePDFWatermark (
-            @RequestParam(value = "fileDirectory") String fileDirectory,
+    @ApiOperation(value = "Image Watermark on a PDF ")
+    @PostMapping("/PDFWatermark")
+    public ResponseEntity<String> PDFWatermark (
+            @RequestParam(value = "pdfDirectory") String pdfDirectory,
             @RequestParam(value = "imageWatermarkDirectory") String imageWatermarkDirectory,
-            @RequestParam(value = "isPDF") boolean isPDF,
             @RequestParam(value = "isRotated") boolean isRotated,
             @RequestParam(value = "isFullPage") boolean isFullPage
     ) throws Exception {
-        String inputFile;
-        String outputFile = "/Users/kyle/Internship/scratch/imageWatermarked.jpeg";
-        String mergeFile = outputFile;
-
-        // Get the number of pages in fileDirectory
+        // --- Step 1. Get the number of pages in fileDirectory ---
         IdentifyCmd pagesIdentifyCmd = new IdentifyCmd(true);
 
         // set the output
@@ -290,17 +337,31 @@ public class IndexController {
 
         // create GM operation
         GMOperation pagesDimensionsOp = new GMOperation();
-        pagesDimensionsOp.addImage(fileDirectory);
+        pagesDimensionsOp.addImage(pdfDirectory);
 
         pagesIdentifyCmd.run(pagesDimensionsOp);
         ArrayList<String> pagesCmdOutput = pagesCommandOutput.getOutput();
-        int pages = pagesCmdOutput.size();
-        System.out.println(pages);
 
+        // Getting the pages of the pdf file
+        // TODO: what happens if the input file is an image file
+        int pages = pagesCmdOutput.size();
+
+        // --- Step 2. Add watermark to each page of the input file
         // Each page represents each "i"
+        String inputFile = null;
+        String outputFile = null;
+        String outputFileBasePdf = "/Users/kyle/Internship/scratch/pdfWatermarked";
+        int density = 400;
+        String resetWatermarkDirectory = imageWatermarkDirectory;
+
+
+        String mask_output_file = null;
+
         for (int i = 0; i < pages; i++) {
-            inputFile = fileDirectory + "[" + i + "]";
-            // step 1: gm convert +shade 30x60 cockatoo.miff mask.miff
+            inputFile = pdfDirectory + "[" + i + "]";
+
+            // step 1): create a mask file of th input
+            // similar gm command: gm convert +shade 30x60 cockatoo.miff mask.miff
             ConvertCmd cmd = new ConvertCmd(true);
             GMOperation op_for_convert = new GMOperation();
 
@@ -308,196 +369,201 @@ public class IndexController {
             op_for_convert.addImage(inputFile);
             op_for_convert.p_shade(30.00, 30.00);
 
-            // temp output file path
-            String mask_output_file = "/Users/kyle/Internship/scratch/mask.jpeg";
+            // temp output file path for the mask
+            mask_output_file = "/Users/kyle/Internship/scratch/mask.jpeg";
             op_for_convert.addImage(mask_output_file);
 
-            // run convert to generate a greyscale version of the input file
+            // run convert to generate a greyscale version of the input file, which
+            // is the mask file
             cmd.run(op_for_convert);
 
-            // step 2: Composite
+            // step 2): Composite of three files: input file, mask file, and watermark file.
             CompositeCmd compositeCmd = new CompositeCmd(true);
             GMOperation op = new GMOperation();
-            // Note: compose is manually added support in im4java. That's why we use
+
+            // Note: compose() is manually added support in im4java. That's why we use
             // a local jar file instead of the ones from the maven repository
             op.compose("bumpmap");
 
             // For resolution purposes, high memory density if file is PDF
-            if (isPDF)
-            {
-                int density = 400;
-                op.density(density);
-                outputFile = "/Users/kyle/Internship/scratch/pdfWatermarked";
-                mergeFile = outputFile;
-            }
+            op.density(density);
 
-//            Rotate the watermark
+            // Rotate the watermark
             if (isRotated) {
-                ConvertCmd rotateCmd = new ConvertCmd(true);
-                GMOperation rotateOP = new GMOperation();
-                rotateOP.addImage(imageWatermarkDirectory);
-                rotateOP.rotate(30.);
-                String rotatedWatermark = "/Users/kyle/Internship/scratch/rotatedWatermark.jpeg";
-                rotateOP.addImage(rotatedWatermark);
-                rotateCmd.run(rotateOP);
-                imageWatermarkDirectory = rotatedWatermark;
+                imageWatermarkDirectory = rotatedWatermark(imageWatermarkDirectory, 30.);
             }
 
-//            Resize to full page watermark
+            // Resize to full page watermark
             if (isFullPage) {
-                // create an Identify command
-                IdentifyCmd identifyCmd = new IdentifyCmd(true);
-
-                // set the output
-                ArrayListOutputConsumer commandOutput = new ArrayListOutputConsumer();
-                identifyCmd.setOutputConsumer(commandOutput);
-
-                // create GM operation
-                GMOperation dimensionsOp = new GMOperation();
-                dimensionsOp.addImage(inputFile);
-
-                identifyCmd.run(dimensionsOp);
-
-                ArrayList<String> cmdOutput = commandOutput.getOutput();
-                String outputString = cmdOutput.get(0);
-
-                StringTokenizer st = new StringTokenizer(outputString, " ", false);
-                int count = 0;
-                String imageDetails = "";
-                while (st.hasMoreTokens()) {
-                    st.nextToken();
-                    if (count == 1) {
-                        imageDetails = (String) st.nextToken();
-                        break;
-                    }
-                    count++;
-                }
-
-                StringTokenizer stringTokenizerPlus = new StringTokenizer(imageDetails, "+", false);
-                String dimensions = stringTokenizerPlus.nextToken();
-
-                StringTokenizer stringTokenizerX = new StringTokenizer(dimensions, "x", false);
-                String stringWidth = stringTokenizerX.nextToken();
-                int width = Integer.parseInt(stringWidth);
-                String stringHeight = stringTokenizerX.nextToken();
-                int height = Integer.parseInt(stringHeight);
-                width *= 2.5;
-                height *= 2.5;
-                ConvertCmd resizeCmd = new ConvertCmd(true);
-                GMOperation resizeOP = new GMOperation();
-                resizeOP.addImage(imageWatermarkDirectory);
-                resizeOP.resize(width, height);
-                String resizedWatermark = "/Users/kyle/Internship/scratch/resizedWatermark.jpeg";
-                resizeOP.addImage(resizedWatermark);
-                resizeCmd.run(resizeOP);
-                imageWatermarkDirectory = resizedWatermark;
+                imageWatermarkDirectory = fullPage(pdfDirectory, imageWatermarkDirectory, isRotated);
             }
 
             op.addImage(imageWatermarkDirectory, inputFile, mask_output_file);
             op.gravity("center");
 
-//            create a seperate pdf for each page of fileDirectory
-            if (isPDF) {
-                outputFile += "[" + i + "].pdf";
-            }
+            // create a separate pdf for each page of fileDirectory
+            outputFile = outputFileBasePdf + "[" + i + "].pdf";
 
             op.addImage(outputFile);
             compositeCmd.run(op);
+
+            // reset the watermark directory to its base image without transformations
+            imageWatermarkDirectory = resetWatermarkDirectory;
         }
 
-//        Combine each page of the previous pdf into one single pdf
-        if (isPDF) {
-            ConvertCmd mergeCMD = new ConvertCmd(true);
+        // Combine each page of the previous pdf into one single pdf
+        ConvertCmd mergeCMD = new ConvertCmd(true);
             GMOperation mergeOperation = new GMOperation();
             for (int i = 0; i < pages; i++) {
-                mergeOperation.addImage(mergeFile + "[" + i + "].pdf");
+                mergeOperation.addImage(outputFileBasePdf + "[" + i + "].pdf");
             }
-            outputFile = mergeFile + ".pdf";
+            outputFile = outputFileBasePdf + ".pdf";
             mergeOperation.addImage(outputFile);
             mergeCMD.run(mergeOperation);
-        }
 
         return ResponseEntity.ok("Your image watermark has been added: " + outputFile);
     }
 
-    // Add a watermark onto an image
     @ApiImplicitParams({
-            @ApiImplicitParam(name = "picDirectory", value = "Directory of the image to be processed", required = true)
+            @ApiImplicitParam(name = "imageDirectory", value = "Directory of the image to be processed", required = true),
+            @ApiImplicitParam(name = "imageWatermarkDirectory", value = "Directory of the image to be used as a watermark", required = true),
+            @ApiImplicitParam(name = "isRotated", value = "Boolean if the watermark is rotated", required = true),
+            @ApiImplicitParam(name = "isFullPage", value = "Boolean if the watermark should cover the entire page", required = true)
     })
-    @ApiOperation(value = "Add Annotations")
-    @PostMapping("/annotate")
-    public ResponseEntity<String> annotate (
-            @RequestParam(value = "picDirectory") String picDirectory
+    @ApiOperation(value = "Image Watermark on an Image")
+    @PostMapping("/imageWatermark")
+    public ResponseEntity<String> imageWatermark (
+            @RequestParam(value = "imageDirectory") String imageDirectory,
+            @RequestParam(value = "imageWatermarkDirectory") String imageWatermarkDirectory,
+            @RequestParam(value = "isRotated") boolean isRotated,
+            @RequestParam(value = "isFullPage") boolean isFullPage
     ) throws Exception {
+        String outputFile = "/Users/kyle/Internship/scratch/imageWatermarked.jpeg";
+        String mask_output_file = null;
+
+        // step 1): create a mask file of th input
+        // similar gm command: gm convert +shade 30x60 cockatoo.miff mask.miff
         ConvertCmd cmd = new ConvertCmd(true);
+        GMOperation op_for_convert = new GMOperation();
+
+        // input file path
+        op_for_convert.addImage(imageDirectory);
+        op_for_convert.p_shade(30.00, 30.00);
+
+        // temp output file path for the mask
+        mask_output_file = "/Users/kyle/Internship/scratch/mask.jpeg";
+        op_for_convert.addImage(mask_output_file);
+
+        // run convert to generate a greyscale version of the input file, which
+        // is the mask file
+        cmd.run(op_for_convert);
+
+        // step 2): Composite of three files: input file, mask file, and watermark file.
+        CompositeCmd compositeCmd = new CompositeCmd(true);
         GMOperation op = new GMOperation();
 
-        int density = 300;
-        op.density(density);
+        // Note: compose() is manually added support in im4java. That's why we use
+        // a local jar file instead of the ones from the maven repository
+        op.compose("bumpmap");
 
-        op.addImage(picDirectory);
-        // text is somewhat working
-        op.draw("text 100,100 'This is a comment'");
-//        op.draw("@/Users/kyle/Internship/scratch/text");
-        op.addImage("/Users/kyle/Internship/scratch/annotatedImage.jpeg");
-        cmd.run(op);
-        return ResponseEntity.ok("Your comment has been added");
+        // Rotate the watermark
+        if (isRotated) {
+            imageWatermarkDirectory = rotatedWatermark(imageWatermarkDirectory, 30.);
+        }
+
+        // Resize to full page watermark
+        if (isFullPage) {
+            imageWatermarkDirectory = fullPage(imageDirectory, imageWatermarkDirectory, isRotated);
+        }
+
+        op.addImage(imageWatermarkDirectory, imageDirectory, mask_output_file);
+        op.gravity("center");
+
+        op.addImage(outputFile);
+        compositeCmd.run(op);
+
+        return ResponseEntity.ok("Your image watermark has been added: " + outputFile);
     }
-    @PostMapping("/testpost")
-    public ResponseEntity<String> TestPost(
-            @RequestParam(value = "degree") String degree,
-            @RequestParam(value = "angle") String angle,
-            @RequestBody String requestBody) throws Exception {
 
-        return ResponseEntity.ok("test posting" + requestBody);
-    }
-
-//    @ApiOperation(value = "普通body请求+Param+Header+Path")
-//    @ApiImplicitParam ({
-//            @ApiImplicitParam(name = "id",value = "id",in = APIParameterIParameterIn.PATH),
-//            @ApiImplicitParam(name = "token",description = "请求token",required = true,in = ParameterIn.HEADER),
-//            @ApiImplicitParam(name = "name",description = "文件名称",required = true,in=ParameterIn.QUERY)
+//    // Add a watermark onto an image
+//    @ApiImplicitParams({
+//            @ApiImplicitParam(name = "picDirectory", value = "Directory of the image to be processed", required = true)
 //    })
-//    @PostMapping("/bodyParamHeaderPath/{id}")
-//    public ResponseEntity<FileResp> bodyParamHeaderPath(@PathVariable("id") String id,@RequestHeader("token") String token, @RequestParam("name")String name,@RequestBody FileResp fileResp){
-//        fileResp.setName(fileResp.getName()+",receiveName:"+name+",token:"+token+",pathID:"+id);
-//        return ResponseEntity.ok(fileResp);
+//    @ApiOperation(value = "Add Annotations")
+//    @PostMapping("/annotate")
+//    public ResponseEntity<String> annotate (
+//            @RequestParam(value = "picDirectory") String picDirectory
+//    ) throws Exception {
+//        ConvertCmd cmd = new ConvertCmd(true);
+//        GMOperation op = new GMOperation();
+//
+//        int density = 300;
+//        op.density(density);
+//
+//        op.addImage(picDirectory);
+//        // text is somewhat working
+//        op.draw("text 100,100 'This is a comment'");
+////        op.draw("@/Users/kyle/Internship/scratch/text");
+//        op.addImage("/Users/kyle/Internship/scratch/annotatedImage.jpeg");
+//        cmd.run(op);
+//        return ResponseEntity.ok("Your comment has been added");
 //    }
-}
-
-//import org.im4java.core.ConvertCmd;
-//        import org.im4java.core.IMOperation;
+//    @PostMapping("/testpost")
+//    public ResponseEntity<String> TestPost(
+//            @RequestParam(value = "degree") String degree,
+//            @RequestParam(value = "angle") String angle,
+//            @RequestBody String requestBody) throws Exception {
 //
-//public class ImageBorderRemover {
-//    public static void main(String[] args) {
-//        String inputImagePath = "path/to/input/image.jpg";
-//        String outputImagePath = "path/to/output/image.jpg";
-//
-//        try {
-//            // Create ConvertCmd instance
-//            ConvertCmd cmd = new ConvertCmd();
-//
-//            // Create IMOperation instance
-//            IMOperation operation = new IMOperation();
-//            operation.addImage(inputImagePath);
-//
-//            // Set border color and geometry
-//            operation.bordercolor("black").border(1);
-//
-//            // Remove black borders
-//            operation.shave(1x1);
-//
-//            // Set output image path
-//            operation.addImage(outputImagePath);
-//
-//            // Execute the operation
-//            cmd.run(operation);
-//
-//            System.out.println("Image borders removed successfully.");
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//        }
+//        return ResponseEntity.ok("test posting" + requestBody);
 //    }
+//
+////    @ApiOperation(value = "普通body请求+Param+Header+Path")
+////    @ApiImplicitParam ({
+////            @ApiImplicitParam(name = "id",value = "id",in = APIParameterIParameterIn.PATH),
+////            @ApiImplicitParam(name = "token",description = "请求token",required = true,in = ParameterIn.HEADER),
+////            @ApiImplicitParam(name = "name",description = "文件名称",required = true,in=ParameterIn.QUERY)
+////    })
+////    @PostMapping("/bodyParamHeaderPath/{id}")
+////    public ResponseEntity<FileResp> bodyParamHeaderPath(@PathVariable("id") String id,@RequestHeader("token") String token, @RequestParam("name")String name,@RequestBody FileResp fileResp){
+////        fileResp.setName(fileResp.getName()+",receiveName:"+name+",token:"+token+",pathID:"+id);
+////        return ResponseEntity.ok(fileResp);
+////    }
 //}
+//
+////import org.im4java.core.ConvertCmd;
+////        import org.im4java.core.IMOperation;
+////
+////public class ImageBorderRemover {
+////    public static void main(String[] args) {
+////        String inputImagePath = "path/to/input/image.jpg";
+////        String outputImagePath = "path/to/output/image.jpg";
+////
+////        try {
+////            // Create ConvertCmd instance
+////            ConvertCmd cmd = new ConvertCmd();
+////
+////            // Create IMOperation instance
+////            IMOperation operation = new IMOperation();
+////            operation.addImage(inputImagePath);
+////
+////            // Set border color and geometry
+////            operation.bordercolor("black").border(1);
+////
+////            // Remove black borders
+////            operation.shave(1x1);
+////
+////            // Set output image path
+////            operation.addImage(outputImagePath);
+////
+////            // Execute the operation
+////            cmd.run(operation);
+////
+////            System.out.println("Image borders removed successfully.");
+////        } catch (Exception e) {
+////            e.printStackTrace();
+////        }
+////    }
+
+}
 
 
